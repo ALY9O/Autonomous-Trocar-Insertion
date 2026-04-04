@@ -39,7 +39,11 @@ class SHERController:
         rospy.Subscriber(frame_ee_sub, Transform, self._pose_callback)
 
         # Wait for first pose message
-        time.sleep(0.5)
+        # Replace the time.sleep(0.5) in __init__ with this:
+        rospy.loginfo("Waiting for FrammeEE topic: {}".format(frame_ee_sub))
+        while self.qw is None and not rospy.is_shutdown():
+            rospy.sleep(0.05)
+        rospy.loginfo("FrameEE received.")
 
         # Control gains
         self.linear_gain = 1
@@ -57,13 +61,18 @@ class SHERController:
 
     def get_current_pose(self):
         """Returns current pose as [x, y, z, roll, pitch, yaw] in mm and degrees"""
-        pos = np.array([self.x, self.y, self.z])
-        quat = np.array([self.qx, self.qy, self.qz, self.qw])
-        r = R.from_quat(quat)
-        # XYZ order: returns [roll, pitch, yaw]
-        euler = r.as_euler('xyz', degrees=True)
-        return np.concatenate([pos, [euler[0], euler[1], euler[2]]])
+        start = time.time()
+        while self.qw is None:
+            if time.time() - start > 5.0:
+                raise RuntimeError("Timed out waiting for FrameEE — check rostopic list")
+            time.sleep(0.05)
 
+        pos  = np.array([self.x, self.y, self.z])
+        quat = np.array([self.qx, self.qy, self.qz, self.qw])
+        r    = R.from_quat(quat)
+        euler = r.as_euler('xyz', degrees=True)
+        return np.concatenate([pos, euler])
+        
     def no_rcm_move_to(self, target_pose, position_tol=0.005, orientation_tol=0.1,
                        timeout=30.0, max_linear_vel=5.0, max_angular_vel=5.0):
         """

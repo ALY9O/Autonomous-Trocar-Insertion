@@ -2,6 +2,8 @@ import numpy as np
 from SHER_Controller import SHERController
 import time
 
+TIMEOUT = 1
+
 def generate_diverse_poses(base_pose):
     """
     Generates 20 targets by adding offsets to a starting position.
@@ -79,7 +81,7 @@ if __name__ == "__main__":
             print(f"Reached Target {i+1}. Switch to GUI and press SPACE now.")
             # We give you 15 seconds to press Space in the other window
             # Alternatively, you can increase this sleep time
-            time.sleep(15) 
+            time.sleep(TIMEOUT) 
         else:
             print(f"Failed to reach Target {i+1}, skipping...")
 

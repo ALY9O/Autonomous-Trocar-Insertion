@@ -12,7 +12,7 @@ from scipy.optimize import least_squares
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtWidgets, QtCore, QtGui
 
-CAMERA_W, CAMERA_H, CAMERA_FPS = 1280, 720, 5
+CAMERA_W, CAMERA_H, CAMERA_FPS = 1280, 720, 30
 SQUARES_X, SQUARES_Y = 8, 6
 SQUARE_LEN = 0.010
 MARKER_LEN = 0.007
