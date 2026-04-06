@@ -27,6 +27,8 @@ import queue
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtWidgets, QtCore, QtGui
 
+import collections
+
 # TODO: replace stub with real import once GUI_subscriber package is available
 # from GUI_subscriber.dumb_demo.robot_subscriber_messy import TestSub
 class TestSub:
@@ -134,6 +136,54 @@ class _OpenCVWriter(_BaseWriter):
     def release(self):
         self._vw.release()
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Threaded frame writer  (replaces direct write_frame calls in depth callback)
+# ─────────────────────────────────────────────────────────────────────────────
+class _FrameWriterThread(threading.Thread):
+    """Drains a queue of (writer, frame_rgb) tuples in a background thread."""
+    def __init__(self):
+        super().__init__(daemon=True)
+        self._q = queue.Queue(maxsize=300)   # ~6s buffer at 50 fps × 3 streams
+        self._stop = threading.Event()
+
+    def enqueue(self, writer, frame_rgb):
+        try:
+            self._q.put_nowait((writer, frame_rgb))
+        except queue.Full:
+            pass  # drop frame rather than block the callback
+
+    def run(self):
+        while not self._stop.is_set():
+            try:
+                writer, frame = self._q.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if frame.ndim == 2:
+                bgr = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+            elif frame.shape[2] == 4:
+                bgr = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
+            else:
+                bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            writer.write(bgr)
+
+    def stop(self):
+        self._stop.set()
+        self.join(timeout=5)
+
+    def drain(self):
+        """Flush remaining frames after recording stops."""
+        while not self._q.empty():
+            try:
+                writer, frame = self._q.get_nowait()
+            except queue.Empty:
+                break
+            if frame.ndim == 2:
+                bgr = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+            elif frame.shape[2] == 4:
+                bgr = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
+            else:
+                bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            writer.write(bgr)
 
 class _FFmpegWriter(_BaseWriter):
     def __init__(self, path, w, h, fps, crf=18, preset="medium", pix_fmt_out="yuv420p"):
@@ -345,6 +395,9 @@ class UnifiedRecorder(QtWidgets.QWidget):
         self.robot_logger       = TestSub()
         self.session_dir        = None
 
+        self._frame_writer = _FrameWriterThread()
+        self._frame_writer.start()
+
         # fps measurement
         self.fps_measurement_window    = []
         self.measured_fps              = None
@@ -523,15 +576,19 @@ class UnifiedRecorder(QtWidgets.QWidget):
         cv2.putText(color_bar, close_lbl, (10, 20),         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
         cv2.putText(color_bar, far_lbl,   (bar_w-60, 20),   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
         self.display_intel_depth = _to_display(np.vstack([color_bar, depth_colormap]))
-
+        
         if self.recording and self.all_writers_ready():
             if self.robot_logger.is_ready_to_log():
                 ts = time.time()
                 self.robot_logger.log_trigger(ts)
-                if self.latest_microscope  is not None: self.write_frame(self.microscope_writer,  self.latest_microscope)
-                if self.latest_intel_rgb   is not None: self.write_frame(self.intel_rgb_writer,   self.latest_intel_rgb)
-                if self.latest_flir_left   is not None: self.write_frame(self.flir_left_writer,   self.latest_flir_left)
-                if self.latest_flir_right  is not None: self.write_frame(self.flir_right_writer,  self.latest_flir_right)
+                if self.latest_microscope is not None and self.microscope_writer is not None:
+                    self._frame_writer.enqueue(self.microscope_writer, self.latest_microscope.copy())
+                if self.latest_intel_rgb is not None and self.intel_rgb_writer is not None:
+                    self._frame_writer.enqueue(self.intel_rgb_writer, self.latest_intel_rgb.copy())
+                if self.latest_flir_left is not None and self.flir_left_writer is not None:
+                    self._frame_writer.enqueue(self.flir_left_writer, self.latest_flir_left.copy())
+                if self.latest_flir_right is not None and self.flir_right_writer is not None:
+                    self._frame_writer.enqueue(self.flir_right_writer, self.latest_flir_right.copy())
                 self.depth_recorder.add_frame(depth_mm, ts)
             else:
                 print("[Debug] Robot logger not ready — frame skipped.")
@@ -600,6 +657,7 @@ class UnifiedRecorder(QtWidgets.QWidget):
 
             self.save_all_data()
             self.release_writers()
+            self._frame_writer.drain()
 
             self._lbl_status.setText(f"Saved  →  {self.session_dir}")
             self._lbl_status.setStyleSheet(f"color:{GREEN}; font-family:{MONO}; font-size:11px; border:none;")
@@ -712,6 +770,8 @@ class UnifiedRecorder(QtWidgets.QWidget):
         if self.recording:
             print("[Recorder] Cleaning up on exit...")
             self.toggle_record()
+        self._frame_writer.stop()
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
