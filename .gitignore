@@ -1,1 +1,5 @@
 *.bmp
+leica-camera-calibration/data/dryeye_test_new.zip
+leica-camera-calibration/data/dryeye_test.zip
+leica-camera-calibration/data/dryeye_train_val_new.zip
+leica-camera-calibration/data/dryeye_train_val.zip
